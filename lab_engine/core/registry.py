@@ -81,6 +81,8 @@ class RoutineMeta:
     instruments: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     params: List[Dict[str, Any]] = field(default_factory=list)
     outputs: List[Dict[str, Any]] = field(default_factory=list)
+    setup_graph: Optional[Dict[str, Any]] = None  # SETUP_GRAPH：保存时的框图快照
+    panel: Optional[Dict[str, Any]] = None        # PANEL：操作面板描述
 
     @property
     def run(self) -> Callable:
@@ -93,11 +95,14 @@ class RoutineRegistry:
     def __init__(self):
         self._routines: Dict[str, RoutineMeta] = {}
         self._paths: List[Path] = []
+        # 最近一次扫描的报告（供 GUI 显示加载失败原因）
+        self.last_report: Dict[str, Any] = {"loaded": [], "failed": [], "duplicates": []}
 
     def discover(self, paths: List[Path]) -> None:
         """递归扫描给定目录下的 .py 文件并加载为例程。"""
         self._paths = list(paths)
         self._routines.clear()
+        self.last_report = {"loaded": [], "failed": [], "duplicates": []}
         for path in paths:
             if not path.is_dir():
                 logger.warning(f"Routine path is not a directory: {path}")
@@ -113,9 +118,15 @@ class RoutineRegistry:
                                 f"Duplicate routine name '{meta.name}' in {py_file}; "
                                 f"overrides {self._routines[meta.name].path}"
                             )
+                            self.last_report["duplicates"].append(
+                                f"{meta.name}（{py_file.name} 覆盖了 "
+                                f"{self._routines[meta.name].path.name}）"
+                            )
                         self._routines[meta.name] = meta
+                        self.last_report["loaded"].append(meta.name)
                 except Exception as exc:
                     logger.warning(f"Failed to load routine {py_file}: {exc}")
+                    self.last_report["failed"].append(f"{py_file.name}: {exc}")
 
     def _load_routine(self, py_file: Path) -> Optional[RoutineMeta]:
         module_name = f"lab_engine_routine_{py_file.stem}"
@@ -146,6 +157,8 @@ class RoutineRegistry:
             instruments=getattr(module, "INSTRUMENTS", {}),
             params=list(getattr(module, "PARAMS", [])),
             outputs=list(getattr(module, "OUTPUTS", [])),
+            setup_graph=getattr(module, "SETUP_GRAPH", None),
+            panel=getattr(module, "PANEL", None),
         )
 
     def get(self, name: str) -> Optional[RoutineMeta]:

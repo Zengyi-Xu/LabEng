@@ -104,10 +104,20 @@ class RoutinePanel(ttk.Frame):
             self._load_routine("")
 
     def _on_refresh(self):
-        """重新扫描例程目录并刷新下拉框。"""
+        """重新扫描例程目录并刷新下拉框；有失败时弹出汇总。"""
         previous = self.routine_var.get()
         self.registry.refresh()
         self._refresh_routine_list(keep_selection=True)
+        report = getattr(self.registry, "last_report", None)
+        if report and (report.get("failed") or report.get("duplicates")):
+            lines = [f"已加载 {len(report.get('loaded', []))} 个例程。"]
+            if report.get("duplicates"):
+                lines.append("\n名称冲突（后者覆盖前者）：")
+                lines.extend(f"  • {d}" for d in report["duplicates"])
+            if report.get("failed"):
+                lines.append("\n加载失败：")
+                lines.extend(f"  • {f}" for f in report["failed"])
+            messagebox.showwarning("例程扫描结果", "\n".join(lines))
 
     def _on_routine_selected(self, _event=None):
         name = self.routine_var.get()
@@ -130,7 +140,7 @@ class RoutinePanel(ttk.Frame):
             desc = f"{routine.icon} {desc}"
         self.desc_lbl.configure(text=desc)
         saved = self.param_store.get(routine.name) if self.param_store else {}
-        self._build_params(routine.params, saved)
+        self._build_params(routine.params, saved, getattr(routine, "panel", None))
         self.run_btn.configure(state=tk.NORMAL)
         if self.on_select:
             self.on_select(routine)
@@ -142,8 +152,23 @@ class RoutinePanel(ttk.Frame):
         self.param_vars.clear()
 
     def _build_params(self, params: List[Dict[str, Any]],
-                      saved: Optional[Dict[str, Any]] = None):
+                      saved: Optional[Dict[str, Any]] = None,
+                      panel: Optional[Dict[str, Any]] = None):
         self._clear_params()
+
+        # 按 PANEL 描述调整参数顺序与可见性（所见即所得）
+        if panel:
+            hidden = set(panel.get("hidden_params", []))
+            params = [p for p in params if p.get("name", "") not in hidden]
+            order: Dict[str, int] = {}
+            for sec in panel.get("sections", []):
+                if sec.get("type") == "params":
+                    for idx, pname in enumerate(sec.get("params", [])):
+                        order.setdefault(pname, idx)
+            if order:
+                params = sorted(params,
+                                key=lambda p: order.get(p.get("name", ""), len(order)))
+
         if not params:
             ttk.Label(self.params_inner, text="（此例程无参数）",
                       style="DimCard.TLabel").pack(anchor=tk.W)

@@ -89,12 +89,11 @@ class LabEngineApp(tk.Tk):
         configure_styles(self, self.scale)
 
         # 核心对象
+        from lab_engine.paths import data_dir, draft_path, param_store_path, routines_dir
         self.registry = RoutineRegistry()
-        self.registry.discover([
-            Path(__file__).resolve().parent / "routines",
-        ])
-        self.data_manager = DataManager(Path.cwd() / "data")
-        self.param_store = ParamStore(Path.cwd() / "data" / "routine_params.json")
+        self.registry.discover([routines_dir()])
+        self.data_manager = DataManager(data_dir())
+        self.param_store = ParamStore(param_store_path())
         self.msg_queue: queue.Queue = queue.Queue()
 
         # 运行状态
@@ -106,6 +105,32 @@ class LabEngineApp(tk.Tk):
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(UPDATE_MS, self._poll_messages)
+        self._draft_path = draft_path()
+        self._notify_draft_if_any()
+        self.after(60_000, self._autosave_draft)
+
+    _DRAFT_INTERVAL_MS = 60_000
+
+    def _autosave_draft(self):
+        """每分钟把设计 Tab 的框图草稿存到 data/draft_setup.json。"""
+        try:
+            panel = getattr(self, "edit_setup_panel", None)
+            if panel is not None and getattr(panel, "_has_project", False):
+                self._draft_path.parent.mkdir(parents=True, exist_ok=True)
+                panel.graph.save(self._draft_path)
+        except Exception:
+            pass
+        self.after(self._DRAFT_INTERVAL_MS, self._autosave_draft)
+
+    def _notify_draft_if_any(self):
+        """启动时若存在上次未保存的草稿，提示用户可在设计 Tab「打开」恢复。"""
+        if self._draft_path.exists():
+            try:
+                self.log_panel.append(
+                    f"检测到上次的设计草稿（{self._draft_path}），"
+                    "可在「测试系统设计」Tab 点「打开」恢复。")
+            except Exception:
+                pass
 
     def _build_ui(self):
         # 顶部标题栏
@@ -383,6 +408,14 @@ class LabEngineApp(tk.Tk):
         self.current_context = None
 
     def _on_close(self):
+        # 关闭前最后一次保存设计草稿
+        try:
+            panel = getattr(self, "edit_setup_panel", None)
+            if panel is not None and getattr(panel, "_has_project", False):
+                self._draft_path.parent.mkdir(parents=True, exist_ok=True)
+                panel.graph.save(self._draft_path)
+        except Exception:
+            pass
         self.stop_event.set()
         self.connection_panel.disconnect_all()
         self.connection_panel.stop_all_workers()

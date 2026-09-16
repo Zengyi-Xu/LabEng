@@ -69,7 +69,9 @@ class Node:
             "x": self.x,
             "y": self.y,
             "label": self.label,
-            "data": self.data,
+            # 以下划线开头的键是运行时状态（如 _template_routine 对象引用），
+            # 不可序列化也不属于持久化内容
+            "data": {k: v for k, v in self.data.items() if not k.startswith("_")},
             "ports": [p.to_dict() for p in self.ports],
         }
 
@@ -384,6 +386,7 @@ def _default_label(node_type: str) -> str:
         "comm": "通信接口",
         "instrument": "仪器",
         "routine": "例程",
+        "text": "双击编辑文本",
     }.get(node_type, node_type.capitalize())
 
 
