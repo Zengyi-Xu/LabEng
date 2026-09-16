@@ -22,6 +22,7 @@ class InstrumentMeta:
     cls: Type
     name: str
     connection_params: List[Dict[str, Any]] = field(default_factory=list)
+    description: str = ""
 
 
 class InstrumentRegistry:
@@ -36,6 +37,7 @@ class InstrumentRegistry:
         cls_type: Type,
         name: str,
         connection_params: Optional[List[Dict[str, Any]]] = None,
+        description: str = "",
     ) -> None:
         """注册一个仪器类。"""
         key = key.lower().strip()
@@ -46,6 +48,7 @@ class InstrumentRegistry:
             cls=cls_type,
             name=name,
             connection_params=connection_params or [],
+            description=description,
         )
         logger.debug(f"Registered instrument: {key}")
 
@@ -92,19 +95,24 @@ class RoutineRegistry:
         self._paths: List[Path] = []
 
     def discover(self, paths: List[Path]) -> None:
-        """扫描给定目录下的 .py 文件并加载为例程。"""
+        """递归扫描给定目录下的 .py 文件并加载为例程。"""
         self._paths = list(paths)
         self._routines.clear()
         for path in paths:
             if not path.is_dir():
                 logger.warning(f"Routine path is not a directory: {path}")
                 continue
-            for py_file in sorted(path.glob("*.py")):
+            for py_file in sorted(path.rglob("*.py")):
                 if py_file.name.startswith("_"):
                     continue
                 try:
                     meta = self._load_routine(py_file)
                     if meta:
+                        if meta.name in self._routines:
+                            logger.warning(
+                                f"Duplicate routine name '{meta.name}' in {py_file}; "
+                                f"overrides {self._routines[meta.name].path}"
+                            )
                         self._routines[meta.name] = meta
                 except Exception as exc:
                     logger.warning(f"Failed to load routine {py_file}: {exc}")

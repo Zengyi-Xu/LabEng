@@ -8,6 +8,7 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Any, Dict, Optional
 
 from lab_engine.core.data_manager import DataManager
+from lab_engine.core.param_store import ParamStore
 from lab_engine.core.registry import RoutineMeta, RoutineRegistry
 from lab_engine.core.routine_context import RoutineContext
 from lab_engine.gui.connection_panel import ConnectionPanel
@@ -93,6 +94,7 @@ class LabEngineApp(tk.Tk):
             Path(__file__).resolve().parent / "routines",
         ])
         self.data_manager = DataManager(Path.cwd() / "data")
+        self.param_store = ParamStore(Path.cwd() / "data" / "routine_params.json")
         self.msg_queue: queue.Queue = queue.Queue()
 
         # 运行状态
@@ -202,6 +204,7 @@ class LabEngineApp(tk.Tk):
             on_select=self._on_routine_selected,
             on_run=self._on_run,
             on_stop=self._on_stop,
+            param_store=self.param_store,
         )
         self.routine_panel.pack(fill=tk.X, pady=(0, 8))
 
@@ -215,6 +218,7 @@ class LabEngineApp(tk.Tk):
             routine_registry=self.registry,
             scale=self.scale,
             viewer_mode=True,
+            on_edit_request=self._on_edit_routine_request,
         )
         self.view_setup_panel.pack(fill=tk.BOTH, expand=True)
 
@@ -225,8 +229,25 @@ class LabEngineApp(tk.Tk):
             routine_registry=self.registry,
             scale=self.scale,
             on_apply=self._on_setup_apply,
+            on_routines_changed=self._on_routines_changed,
         )
         self.edit_setup_panel.pack(fill=tk.BOTH, expand=True)
+
+    def _on_routines_changed(self):
+        """例程文件有新增/变更时刷新运行 Tab 的下拉列表。"""
+        if getattr(self, "routine_panel", None) is not None:
+            self.routine_panel._refresh_routine_list(keep_selection=True)
+
+    def _on_edit_routine_request(self, routine):
+        """从“例程结构”只读页请求编辑：跳到设计 Tab 并载入该例程为模板。"""
+        if routine is None:
+            return
+        try:
+            idx = self.notebook.index(self.edit_setup_panel.master)
+            self.notebook.select(idx)
+        except Exception:
+            pass
+        self.edit_setup_panel.load_routine_as_template(routine)
 
     def _on_setup_apply(self, graph):
         """Setup 框图点击"应用到运行配置"时的回调（当前仅记录日志）。"""

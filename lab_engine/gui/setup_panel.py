@@ -66,6 +66,28 @@ PORT_COLORS = {
 GRID_SIZE = 20
 GRID_COLOR = "#64748B"  # 深灰蓝色，在浅灰背景上更清晰
 
+# 全局连线样式选项（key -> 显示名）
+EDGE_STYLES = {
+    "bezier": "贝塞尔曲线",
+    "straight": "直线",
+    "elbow": "直角肘形",
+    "elbow_round": "圆弧肘形",
+}
+
+
+def _edge_points(x1: float, y1: float, x2: float, y2: float,
+                 style: str) -> Tuple[List[float], bool]:
+    """根据连线样式返回 canvas 坐标点列和 smooth 标志。"""
+    cx = (x1 + x2) / 2
+    if style == "straight":
+        return [x1, y1, x2, y2], False
+    if style == "elbow":
+        return [x1, y1, cx, y1, cx, y2, x2, y2], False
+    if style == "elbow_round":
+        return [x1, y1, cx, y1, cx, y2, x2, y2], True
+    # 默认贝塞尔曲线
+    return [x1, y1, cx, y1, cx, y2, x2, y2], True
+
 
 class SetupPanel(ttk.Frame):
     """Setup 框图编辑器。"""
@@ -79,6 +101,8 @@ class SetupPanel(ttk.Frame):
         on_node_activate: Optional[Callable[[Node], None]] = None,
         node_activate_label: str = "查看详情",
         viewer_mode: bool = False,
+        on_routines_changed: Optional[Callable[[], None]] = None,
+        on_edit_request: Optional[Callable[[Any], None]] = None,
     ):
         super().__init__(parent)
         self.routine_registry = routine_registry
@@ -86,6 +110,8 @@ class SetupPanel(ttk.Frame):
         self.on_node_activate = on_node_activate
         self.node_activate_label = node_activate_label
         self.viewer_mode = viewer_mode
+        self.on_routines_changed = on_routines_changed
+        self.on_edit_request = on_edit_request
         if scale is None:
             from lab_engine.gui.shell import get_system_dpi
             scale = max(get_system_dpi() / 96.0, 1.0)
@@ -141,6 +167,12 @@ class SetupPanel(ttk.Frame):
         self._template_routine_btn: Optional[tk.Widget] = None
         self._gen_routine_btn: Optional[tk.Widget] = None
 
+        # 悬浮说明状态
+        self._tooltip: Optional[tk.Toplevel] = None
+        self._tooltip_after: Optional[str] = None
+        self._tooltip_text: str = ""
+        self._tooltip_pos: Tuple[int, int] = (0, 0)
+
         self._build_ui()
         self._bind_events()
         # 默认进入编辑模式（viewer_mode 下保持只读）
@@ -190,6 +222,28 @@ class SetupPanel(ttk.Frame):
                 state=tk.DISABLED,
             )
             self._gen_routine_btn.pack(side=tk.LEFT, padx=4)
+
+            ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
+            ttk.Label(toolbar, text="连线样式:").pack(side=tk.LEFT)
+            self.edge_style_var = tk.StringVar(value=EDGE_STYLES["bezier"])
+            style_combo = ttk.Combobox(
+                toolbar, textvariable=self.edge_style_var, state="readonly", width=10,
+                values=list(EDGE_STYLES.values()),
+            )
+            style_combo.pack(side=tk.LEFT, padx=(4, 4))
+            style_combo.bind("<<ComboboxSelected>>", self._on_edge_style_changed)
+
+        else:
+            # viewer_mode：只显示标题和一个“编辑”入口按钮
+            self._toolbar = tk.Frame(self, bg=COLOR_BG)
+            self._toolbar.pack(fill=tk.X, pady=(0, 8))
+            toolbar = self._toolbar
+            ttk.Label(toolbar, text="例程结构（只读）", style="Title.TLabel").pack(side=tk.LEFT)
+            self._edit_in_design_btn = ttk.Button(
+                toolbar, text="✎ 在设计模式中编辑", command=self._on_edit_in_design,
+                state=tk.DISABLED,
+            )
+            self._edit_in_design_btn.pack(side=tk.RIGHT, padx=4)
 
         # 主区域：canvas + 属性面板
         body = tk.Frame(self, bg=COLOR_BG)
@@ -257,7 +311,7 @@ class SetupPanel(ttk.Frame):
         )
 
         if not self.viewer_mode:
-            ttk.Label(prop_inner, text="提示: 选中节点后编辑属性，拖拽端口连线。\nCtrl+滚轮缩放，空格+左键平移，中键拖拽平移画布。",
+            ttk.Label(prop_inner, text="提示: 选中节点后编辑属性，拖拽端口连线。\n滚轮上下平移，Shift+滚轮左右平移，Ctrl+滚轮缩放，空格+左键/中键拖拽平移。",
                       wraplength=dpi_scale(260, self.scale), style="DimCard.TLabel").pack(
                 side=tk.BOTTOM, anchor=tk.W, pady=(8, 0)
             )
@@ -313,6 +367,29 @@ class SetupPanel(ttk.Frame):
         has_routine = any(n.node_type == "routine" for n in self.graph.nodes.values())
         self._gen_routine_btn.configure(state=tk.NORMAL if has_routine else tk.DISABLED)
 
+    def _current_edge_style_key(self) -> str:
+        var = getattr(self, "edge_style_var", None)
+        if var is None:
+            return "bezier"
+        for key, display in EDGE_STYLES.items():
+            if display == var.get():
+                return key
+        return "bezier"
+
+    def _on_edge_style_changed(self, _event=None):
+        self._redraw_all_edges()
+        self._set_status(f"连线样式: {self.edge_style_var.get()}")
+
+    def _on_edit_in_design(self):
+        """viewer_mode 下请求跳转到设计模式编辑当前例程。"""
+        if self.on_edit_request and self._current_routine is not None:
+            self.on_edit_request(self._current_routine)
+
+    def load_routine_as_template(self, routine: Any):
+        """把指定例程载入为可编辑模板（供 app 从“例程结构”Tab 调用）。"""
+        self._current_routine = routine
+        self._build_routine_view(routine, editable=True)
+
     def set_current_routine(self, routine: Optional[Any]):
         """外部调用：切换 Setup 框图中显示的例程结构。
 
@@ -327,13 +404,23 @@ class SetupPanel(ttk.Frame):
         if routine is None:
             self.set_editable(False)
             self._redraw_all()
+            if getattr(self, "_edit_in_design_btn", None) is not None:
+                self._edit_in_design_btn.configure(state=tk.DISABLED)
             self._set_status("请在“运行”Tab 选择一个例程，或点击“新建例程/基于模板新建”开始编辑")
             return
 
         self._build_routine_view(routine, editable=False)
+        if getattr(self, "_edit_in_design_btn", None) is not None:
+            self._edit_in_design_btn.configure(
+                state=tk.NORMAL if self.on_edit_request else tk.DISABLED
+            )
 
     def _build_routine_view(self, routine: Any, editable: bool = False):
         """生成单个例程的框图结构：上位机 → 通信接口 → 仪器(们) → 例程。"""
+        # 总是从空图开始，避免叠加旧节点（set_current_routine 也调用本方法）
+        self.graph = SetupGraph()
+        self.selected_node_id = None
+        self.selected_node_ids = set()
         start_x = 120
         start_y = 180
         col_comm = 220
@@ -368,7 +455,7 @@ class SetupPanel(ttk.Frame):
             "routine", inst_x, start_y,
             label=routine.name,
             data={
-                "routine_name": routine.name,
+                "template": routine.name,
                 "_template_routine": routine,
             },
         )
@@ -441,7 +528,7 @@ class SetupPanel(ttk.Frame):
             "",
             "拖拽端口连线，左键拖拽空白处框选",
             "Shift+点击多选，Ctrl+C/V 复制粘贴",
-            "Ctrl+滚轮缩放  空格+左键平移",
+            "滚轮平移画面  Shift+滚轮水平平移  Ctrl+滚轮缩放",
             "节点关系：上位机 → 通信 → 仪器 → 例程",
         ]
         # 左上角对齐，确保初始画面一定能看到
@@ -506,6 +593,132 @@ class SetupPanel(ttk.Frame):
         self.bind_all("<Control-C>", self._on_copy, add="+")
         self.bind_all("<Control-v>", self._on_paste, add="+")
         self.bind_all("<Control-V>", self._on_paste, add="+")
+        # 悬浮说明（按 tag 绑定，之后绘制的节点/连线自动生效）
+        self.canvas.tag_bind("node", "<Enter>", self._on_node_enter)
+        self.canvas.tag_bind("node", "<Leave>", self._on_item_leave)
+        self.canvas.tag_bind("node", "<Motion>", self._on_item_motion)
+        self.canvas.tag_bind("edge", "<Enter>", self._on_edge_enter)
+        self.canvas.tag_bind("edge", "<Leave>", self._on_item_leave)
+        self.canvas.tag_bind("edge", "<Motion>", self._on_item_motion)
+
+    # ------------------------------------------------------------------
+    # 悬浮说明
+    # ------------------------------------------------------------------
+    def _schedule_tooltip(self, text: str, event):
+        self._cancel_tooltip()
+        self._tooltip_text = text
+        self._tooltip_pos = (event.x_root + 14, event.y_root + 10)
+        self._tooltip_after = self.after(400, self._show_tooltip)
+
+    def _cancel_tooltip(self):
+        if self._tooltip_after is not None:
+            try:
+                self.after_cancel(self._tooltip_after)
+            except Exception:
+                pass
+            self._tooltip_after = None
+        self._hide_tooltip()
+
+    def _hide_tooltip(self):
+        if self._tooltip is not None:
+            try:
+                self._tooltip.destroy()
+            except Exception:
+                pass
+            self._tooltip = None
+
+    def _show_tooltip(self):
+        self._tooltip_after = None
+        text = getattr(self, "_tooltip_text", "")
+        if not text:
+            return
+        win = tk.Toplevel(self)
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        lbl = tk.Label(
+            win, text=text, justify=tk.LEFT,
+            bg="#1E293B", fg="#E2E8F0", relief=tk.SOLID, bd=1,
+            font=(UI_FONT, 9), padx=8, pady=5, wraplength=280,
+        )
+        lbl.pack()
+        x, y = self._tooltip_pos
+        win.update_idletasks()
+        win.geometry(f"+{x}+{y}")
+        self._tooltip = win
+
+    def _move_tooltip(self, event):
+        if self._tooltip is not None:
+            self._tooltip.geometry(f"+{event.x_root + 14}+{event.y_root + 10}")
+
+    def _current_tag_owner(self, event, prefix: str) -> Optional[str]:
+        """从当前悬停 item 的 tags 里取出 node:<id> / edge:<id>。"""
+        item = self.canvas.find_withtag("current")
+        if not item:
+            return None
+        for tag in self.canvas.gettags(item[0]):
+            if tag.startswith(prefix):
+                return tag.split(":", 1)[1]
+        return None
+
+    def _on_node_enter(self, event):
+        node_id = self._current_tag_owner(event, "node:")
+        node = self.graph.get_node(node_id) if node_id else None
+        if node is None:
+            return
+        self._schedule_tooltip(self._describe_node(node), event)
+
+    def _on_edge_enter(self, event):
+        edge_id = self._current_tag_owner(event, "edge:")
+        edge = self.graph.edges.get(edge_id) if edge_id else None
+        if edge is None:
+            return
+        src = self.graph.get_node(edge.source_node)
+        dst = self.graph.get_node(edge.target_node)
+        if src is None or dst is None:
+            return
+        self._schedule_tooltip(
+            f"{src.label}  →  {dst.label}\n({edge.source_port} → {edge.target_port})",
+            event,
+        )
+
+    def _on_item_leave(self, _event):
+        self._cancel_tooltip()
+
+    def _on_item_motion(self, event):
+        if self._tooltip is not None:
+            self._move_tooltip(event)
+
+    def _describe_node(self, node: Node) -> str:
+        """根据节点类型组装悬浮说明文字。"""
+        if node.node_type == "host":
+            return "上位机\n运行 Lab Engine 的电脑，负责调度仪器与例程。"
+        if node.node_type == "comm":
+            protocol = node.data.get("protocol", "RS-232")
+            address = node.data.get("address", "")
+            return (f"通信接口（{protocol}）\n"
+                    f"上位机与仪器之间的通信链路。\n地址: {address}")
+        if node.node_type == "instrument":
+            key = node.data.get("instrument_key", "")
+            meta = InstrumentRegistry.get(key)
+            alias = node.data.get("alias", "")
+            name = meta.name if meta else key
+            desc = meta.description if meta else ""
+            text = f"{name}"
+            if alias:
+                text += f"（别名: {alias}）"
+            if desc:
+                text += f"\n{desc}"
+            return text
+        if node.node_type == "routine":
+            template = node.data.get("template") or node.data.get("routine_name") or ""
+            routine = self.routine_registry.get(template) if template else None
+            if routine:
+                text = f"{routine.icon} {routine.name}" if routine.icon else routine.name
+                if routine.description:
+                    text += f"\n{routine.description}"
+                return text
+            return (f"{node.label}\n新例程：设置仪器连线后点击“生成例程代码”。")
+        return node.label
 
     # ------------------------------------------------------------------
     # 节点与图操作
@@ -536,8 +749,7 @@ class SetupPanel(ttk.Frame):
             node.data.setdefault("alias", f"inst_{len(self.graph.nodes)}")
             self._rebuild_instrument_ports(node)
         elif node.node_type == "routine":
-            names = self.routine_registry.names()
-            node.data.setdefault("routine_name", names[0] if names else "")
+            node.data.setdefault("template", "")
             self._rebuild_routine_ports(node)
 
     def _rebuild_instrument_ports(self, node: Node):
@@ -549,8 +761,8 @@ class SetupPanel(ttk.Frame):
 
     def _rebuild_routine_ports(self, node: Node):
         from lab_engine.core.setup_graph import Port
-        routine_name = node.data.get("routine_name", "")
-        routine = self.routine_registry.get(routine_name)
+        template = node.data.get("template") or node.data.get("routine_name") or ""
+        routine = self.routine_registry.get(template) if template else None
         ports = []
         if routine:
             for alias in routine.instruments.keys():
@@ -797,13 +1009,13 @@ class SetupPanel(ttk.Frame):
         x1, y1 = self._to_screen(x1, y1)
         x2, y2 = self._to_screen(x2, y2)
 
-        # 贝塞尔曲线：中点控制点
-        cx = (x1 + x2) / 2
+        # 按全局样式生成连线几何
+        points, smooth = _edge_points(x1, y1, x2, y2, self._current_edge_style_key())
         color = PORT_COLORS.get(src_port.data_type, COLOR_PRIMARY)
         line = self.canvas.create_line(
-            x1, y1, cx, y1, cx, y2, x2, y2,
+            *points,
             fill=color, width=max(1, int(2 * self.zoom)),
-            smooth=True, splinesteps=24,
+            smooth=smooth, splinesteps=24,
             tags=(f"edge:{edge_id}", "edge"),
         )
         self._edge_items[edge_id] = line
@@ -1197,6 +1409,13 @@ class SetupPanel(ttk.Frame):
             if self.zoom != old_zoom:
                 self._redraw_all()
                 self._set_status(f"缩放: {self.zoom:.2f}x")
+            return
+        # 滚轮 = 上下平移，Shift+滚轮 = 左右平移
+        steps = -3 if event.delta > 0 else 3
+        if event.state & 0x0001:  # Shift
+            self.canvas.xview_scroll(steps, "units")
+        else:
+            self.canvas.yview_scroll(steps, "units")
 
     def _on_space_press(self, _event):
         self._space_pressed = True
@@ -1410,18 +1629,19 @@ class SetupPanel(ttk.Frame):
         src_port = src.port(src_port_name) if src else None
         if src is None or src_port is None:
             return
+        # 端口与鼠标都要走同一套坐标换算（zoom * scale），
+        # 之前漏乘 scale 导致高 DPI 下临时线偏离光标、几乎看不见
         x1, y1 = self._port_position(src, src_port)
-        x1 *= self.zoom
-        y1 *= self.zoom
-        x2 *= self.zoom
-        y2 *= self.zoom
-        cx = (x1 + x2) / 2
+        x1, y1 = self._to_screen(x1, y1)
+        x2, y2 = self._to_screen(x2, y2)
+        points, smooth = _edge_points(x1, y1, x2, y2, self._current_edge_style_key())
         self._temp_edge_line = self.canvas.create_line(
-            x1, y1, cx, y1, cx, y2, x2, y2,
-            fill="#94A3B8", width=max(1, int(2 * self.zoom)),
-            smooth=True, splinesteps=24, dash=(4, 4),
+            *points,
+            fill=COLOR_PRIMARY, width=max(2, int(2 * self.zoom)),
+            smooth=smooth, splinesteps=24,
             tags=("temp_edge",),
         )
+        self.canvas.tag_raise(self._temp_edge_line)
 
     def _highlight_connectable_ports(self, source_node_id: str, source_port_name: str):
         """高亮可连接的端口。"""
@@ -1532,8 +1752,22 @@ class SetupPanel(ttk.Frame):
                         self._add_prop_entry(node, name, label, str(default))
 
         elif node.node_type == "routine":
-            self._add_prop_choice(node, "routine_name", "例程", self.routine_registry.names())
-            routine = self.routine_registry.get(node.data.get("routine_name", ""))
+            # 关联模板：决定节点有哪些仪器端口、可复用哪些 PARAMS
+            names = self.routine_registry.names()
+            template = node.data.get("template") or node.data.get("routine_name") or ""
+            row = tk.Frame(self.prop_frame, bg=COLOR_CARD)
+            row.pack(fill=tk.X, pady=3)
+            ttk.Label(row, text="关联模板:", width=10).pack(side=tk.LEFT)
+            tvar = tk.StringVar(value=template if template else "(无)")
+            tcombo = ttk.Combobox(row, textvariable=tvar, state="readonly", width=18,
+                                  values=["(无)"] + names)
+            tcombo.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            tcombo.bind("<<ComboboxSelected>>",
+                        lambda _e: self._on_template_changed(node, tvar))
+            self._prop_vars["template"] = tvar
+            self._prop_widgets.extend([row, tcombo])
+
+            routine = self.routine_registry.get(template) if template else None
             if routine:
                 for p in routine.params:
                     name = p["name"]
@@ -1546,6 +1780,11 @@ class SetupPanel(ttk.Frame):
                         self._add_prop_bool(node, name, label, bool(default))
                     else:
                         self._add_prop_entry(node, name, label, str(default))
+            else:
+                ttk.Label(self.prop_frame,
+                          text="未关联模板：请在上方“名称”里填写新例程名，\n生成代码时会将其写入 NAME 字段。",
+                          wraplength=dpi_scale(240, self.scale),
+                          style="DimCard.TLabel").pack(anchor=tk.W, pady=(4, 0))
 
     def _add_prop_entry(self, node: Node, key: str, label: str, default: str):
         row = tk.Frame(self.prop_frame, bg=COLOR_CARD)
@@ -1601,6 +1840,18 @@ class SetupPanel(ttk.Frame):
 
         self._set_status(f"更新 {node.label}.{key}")
 
+    def _on_template_changed(self, node: Node, var: tk.Variable):
+        """routine 节点切换关联模板。"""
+        if not self._editable:
+            return
+        value = var.get()
+        node.data["template"] = "" if value == "(无)" else value
+        node.data.pop("routine_name", None)
+        self._rebuild_routine_ports(node)
+        self._redraw_node(node.node_id)
+        self._build_property_panel()
+        self._set_status(f"更新 {node.label}.模板 -> {node.data['template'] or '(无)'}")
+
     # ------------------------------------------------------------------
     # 例程生成
     # ------------------------------------------------------------------
@@ -1614,7 +1865,7 @@ class SetupPanel(ttk.Frame):
         # 自动放置一个最小模板：上位机 → 通信 → 例程
         host = self.graph.add_node("host", 120, 180, label="上位机")
         comm = self.graph.add_node("comm", 340, 180, label="通信接口")
-        routine = self.graph.add_node("routine", 780, 180, label="新例程", data={"routine_name": "新例程"})
+        routine = self.graph.add_node("routine", 780, 180, label="新例程", data={"template": ""})
         self._rebuild_routine_ports(routine)
         self.graph.add_edge(host.node_id, "control", comm.node_id, "control")
 
@@ -1713,6 +1964,9 @@ class SetupPanel(ttk.Frame):
 
         # 收集参数：优先使用模板例程的 PARAMS 结构，并用属性面板中修改后的值覆盖
         template_routine = routine_node.data.get("_template_routine")
+        if template_routine is None:
+            template_key = routine_node.data.get("template") or routine_node.data.get("routine_name") or ""
+            template_routine = self.routine_registry.get(template_key) if template_key else None
         params: List[Dict[str, Any]] = []
         if template_routine and template_routine.params:
             for p in template_routine.params:
@@ -1741,6 +1995,10 @@ class SetupPanel(ttk.Frame):
         code = self._render_routine_template(routine_name, instruments, params)
         try:
             Path(path).write_text(code, encoding="utf-8")
+            # 生成的新例程立即可选：刷新注册表并通知外部刷新下拉列表
+            self.routine_registry.refresh()
+            if self.on_routines_changed:
+                self.on_routines_changed()
             self._set_status(f"已生成例程: {path}")
             messagebox.showinfo("生成成功", f"例程骨架已保存到:\n{path}\n\n请在 run() 函数中补充具体测试逻辑。")
         except Exception as exc:

@@ -4,6 +4,7 @@ from tkinter import messagebox, ttk
 from typing import Any, Callable, Dict, List, Optional
 
 from lab_engine.core.registry import RoutineMeta, RoutineRegistry
+from lab_engine.core.param_store import ParamStore
 from lab_engine.gui.shell import COLOR_BG, COLOR_CARD, COLOR_TEXT_DIM, UI_FONT
 
 
@@ -17,15 +18,18 @@ class RoutinePanel(ttk.Frame):
         on_select: Optional[Callable[[Optional[RoutineMeta]], None]] = None,
         on_run: Optional[Callable[[], None]] = None,
         on_stop: Optional[Callable[[], None]] = None,
+        param_store: Optional[ParamStore] = None,
     ):
         super().__init__(parent)
         self.registry = registry
         self.on_select = on_select
         self.on_run = on_run
         self.on_stop = on_stop
+        self.param_store = param_store
         self.current_routine: Optional[RoutineMeta] = None
         self.param_vars: Dict[str, tk.Variable] = {}
         self.param_widgets: List[tk.Widget] = []
+        self._loading = False  # 批量回填参数时抑制自动保存
         self._setup_ui()
         self._refresh_routine_list()
 
@@ -125,7 +129,8 @@ class RoutinePanel(ttk.Frame):
         if routine.icon:
             desc = f"{routine.icon} {desc}"
         self.desc_lbl.configure(text=desc)
-        self._build_params(routine.params)
+        saved = self.param_store.get(routine.name) if self.param_store else {}
+        self._build_params(routine.params, saved)
         self.run_btn.configure(state=tk.NORMAL)
         if self.on_select:
             self.on_select(routine)
@@ -136,21 +141,48 @@ class RoutinePanel(ttk.Frame):
         self.param_widgets.clear()
         self.param_vars.clear()
 
-    def _build_params(self, params: List[Dict[str, Any]]):
+    def _build_params(self, params: List[Dict[str, Any]],
+                      saved: Optional[Dict[str, Any]] = None):
         self._clear_params()
         if not params:
             ttk.Label(self.params_inner, text="（此例程无参数）",
                       style="DimCard.TLabel").pack(anchor=tk.W)
             return
 
-        for p in params:
-            self._make_param_widget(p)
+        self._loading = True
+        try:
+            for p in params:
+                self._make_param_widget(p, saved or {})
+        finally:
+            self._loading = False
 
-    def _make_param_widget(self, p: Dict[str, Any]):
+    def _autosave_param(self, name: str, var: tk.Variable):
+        """单个参数被修改时自动写入参数存储。"""
+        if self._loading or self.current_routine is None or self.param_store is None:
+            return
+        try:
+            value = var.get()
+        except Exception:
+            return
+        self.param_store.update(self.current_routine.name, name, value)
+
+    def _save_all_params(self):
+        """把当前所有参数值整体写入参数存储。"""
+        if self.current_routine is None or self.param_store is None:
+            return
+        values: Dict[str, Any] = {}
+        for name, var in self.param_vars.items():
+            try:
+                values[name] = var.get()
+            except Exception:
+                pass
+        self.param_store.set(self.current_routine.name, values)
+
+    def _make_param_widget(self, p: Dict[str, Any], saved: Dict[str, Any]):
         name = p["name"]
         label = p.get("label", name)
         ptype = p.get("type", "float")
-        default = p.get("default", 0)
+        default = saved.get(name, p.get("default", 0))
 
         row = tk.Frame(self.params_inner, bg=COLOR_CARD)
         row.pack(fill=tk.X, pady=3)
@@ -182,6 +214,10 @@ class RoutinePanel(ttk.Frame):
             entry.pack(side=tk.LEFT)
 
         self.param_vars[name] = var
+        var.trace_add("write", lambda *_: self._autosave_param(name, var))
+        if ptype == "choice":
+            combo.bind("<<ComboboxSelected>>",
+                       lambda _e: self._autosave_param(name, var))
 
     def get_params(self) -> Dict[str, Any]:
         """收集当前参数值。"""
@@ -266,6 +302,7 @@ class RoutinePanel(ttk.Frame):
     def _on_run_click(self):
         if not self.validate_params():
             return
+        self._save_all_params()
         if self.on_run:
             self.on_run()
 
