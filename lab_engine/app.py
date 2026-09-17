@@ -11,6 +11,8 @@ from lab_engine.core.data_manager import DataManager
 from lab_engine.core.param_store import ParamStore
 from lab_engine.core.registry import RoutineMeta, RoutineRegistry
 from lab_engine.core.routine_context import RoutineContext
+from lab_engine.core.setup_graph import SetupGraph
+from lab_engine.core.system_registry import SystemRegistry
 from lab_engine.gui.connection_panel import ConnectionPanel
 from lab_engine.gui.log_panel import LogPanel
 from lab_engine.gui.plot_panel import PlotPanel
@@ -89,9 +91,12 @@ class LabEngineApp(tk.Tk):
         configure_styles(self, self.scale)
 
         # 核心对象
-        from lab_engine.paths import data_dir, draft_path, param_store_path, routines_dir
+        from lab_engine.paths import data_dir, draft_path, param_store_path, routines_dir, systems_dir
         self.registry = RoutineRegistry()
         self.registry.discover([routines_dir()])
+        # 测试系统注册表：.py 例程（单位系统）+ .labsetup.json（组合系统）
+        self.system_registry = SystemRegistry(self.registry)
+        self.system_registry.discover([systems_dir(), data_dir()])
         self.data_manager = DataManager(data_dir())
         self.param_store = ParamStore(param_store_path())
         self.msg_queue: queue.Queue = queue.Queue()
@@ -101,6 +106,9 @@ class LabEngineApp(tk.Tk):
         self.stop_event = threading.Event()
         self.current_context: Optional[RoutineContext] = None
         self._last_params: Dict[str, Any] = {}
+
+        # 当前已应用的 Setup 项目（用于向运行页传递面板配置等）
+        self.current_setup_graph: Optional[SetupGraph] = None
 
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -145,14 +153,14 @@ class LabEngineApp(tk.Tk):
         notebook.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 8))
         self.notebook = notebook
 
-        # Tab 1：运行（原来的主界面）
+        # Tab 1：运行测试系统
         run_tab = tk.Frame(notebook, bg=COLOR_BG)
-        notebook.add(run_tab, text="  运行  ")
+        notebook.add(run_tab, text="  运行测试系统  ")
         self._build_run_tab(run_tab)
 
-        # Tab 2：例程结构（只读，显示当前选中的测试例程）
+        # Tab 2：测试系统结构（只读，显示当前选中的测试系统）
         view_tab = tk.Frame(notebook, bg=COLOR_BG)
-        notebook.add(view_tab, text="  例程结构  ")
+        notebook.add(view_tab, text="  测试系统结构  ")
         self._build_view_setup_tab(view_tab)
 
         # Tab 3：测试系统设计（可编辑，用于新建/编辑测试系统）
@@ -160,14 +168,17 @@ class LabEngineApp(tk.Tk):
         notebook.add(edit_tab, text="  测试系统设计  ")
         self._build_edit_setup_tab(edit_tab)
 
-        # RoutinePanel 初始化时会自动选择第一个例程，此时 view_setup_panel
-        # 尚未创建，因此在这里手动同步一次当前例程到例程结构面板。
+        # RoutinePanel 初始化时会自动选择第一个测试系统，此时 view_setup_panel
+        # 尚未创建，因此在这里手动同步一次当前系统到结构面板。
         current = getattr(self.routine_panel, "current_routine", None)
+        system = getattr(self.routine_panel, "current_system", None)
+        setup_graph = system.graph if (system is not None and system.is_setup) else None
         if current is not None:
-            self.view_setup_panel.set_current_routine(current)
+            self.view_setup_panel.set_current_routine(current, setup_graph=setup_graph)
             try:
                 idx = self.notebook.index(self.view_setup_panel.master)
-                self.notebook.tab(idx, text=f"  例程结构: {current.name}  ")
+                title = system.name if system is not None else current.name
+                self.notebook.tab(idx, text=f"  测试系统结构: {title}  ")
             except Exception:
                 pass
         else:
@@ -218,11 +229,16 @@ class LabEngineApp(tk.Tk):
         ttk.Entry(out_inner, textvariable=self.output_dir_var, width=28).pack(side=tk.LEFT, padx=8)
         ttk.Button(out_inner, text="浏览", command=self._browse_output_dir).pack(side=tk.LEFT)
 
+        # CodePlot 绘图工作台
+        from lab_engine.gui.codeplot_panel import open_codeplot_window
+        ttk.Button(left_inner, text="📈 CodePlot 绘图工作台",
+                   command=lambda: open_codeplot_window(self)).pack(fill=tk.X, pady=(0, 8))
+
         # 仪器连接面板
         self.connection_panel = ConnectionPanel(left_inner, self.msg_queue)
         self.connection_panel.pack(fill=tk.X, pady=(0, 8))
 
-        # 例程面板（创建时会触发 on_select，依赖 plot_panel 已存在）
+        # 测试系统面板（创建时会触发 on_select，依赖 plot_panel 已存在）
         self.routine_panel = RoutinePanel(
             left_inner,
             self.registry,
@@ -230,6 +246,7 @@ class LabEngineApp(tk.Tk):
             on_run=self._on_run,
             on_stop=self._on_stop,
             param_store=self.param_store,
+            system_registry=self.system_registry,
         )
         self.routine_panel.pack(fill=tk.X, pady=(0, 8))
 
@@ -259,7 +276,9 @@ class LabEngineApp(tk.Tk):
         self.edit_setup_panel.pack(fill=tk.BOTH, expand=True)
 
     def _on_routines_changed(self):
-        """例程文件有新增/变更时刷新运行 Tab 的下拉列表。"""
+        """例程/系统文件有新增/变更时刷新运行 Tab 的下拉列表。"""
+        if getattr(self, "system_registry", None) is not None:
+            self.system_registry.refresh()
         if getattr(self, "routine_panel", None) is not None:
             self.routine_panel._refresh_routine_list(keep_selection=True)
 
@@ -274,9 +293,29 @@ class LabEngineApp(tk.Tk):
             pass
         self.edit_setup_panel.load_routine_as_template(routine)
 
-    def _on_setup_apply(self, graph):
-        """Setup 框图点击"应用到运行配置"时的回调（当前仅记录日志）。"""
-        self.log_panel.append("测试系统设计已应用（当前版本仅预览）")
+    def _on_setup_apply(self, graph: SetupGraph):
+        """Setup 框图点击"应用到运行配置"时保存当前项目，并尝试同步到运行页。"""
+        self.current_setup_graph = graph
+        self.log_panel.append("测试系统设计已应用")
+
+        # 如果运行页当前已选中某个例程，立即按 Setup 项目里的面板配置刷新参数表单
+        routine = getattr(self.routine_panel, "current_routine", None)
+        if routine is not None:
+            panel_cfg = self._find_setup_panel_for_routine(routine.name)
+            if panel_cfg is not None:
+                self.routine_panel.set_panel(panel_cfg)
+
+    def _find_setup_panel_for_routine(self, routine_name: str) -> Optional[Dict[str, Any]]:
+        """在当前 Setup 项目中查找引用指定例程的 routine 节点，返回其 panel_cfg。"""
+        if self.current_setup_graph is None:
+            return None
+        for node in self.current_setup_graph.nodes.values():
+            if node.node_type != "routine":
+                continue
+            ref = node.data.get("template") or node.data.get("routine_name") or ""
+            if ref == routine_name:
+                return node.data.get("panel_cfg")
+        return None
 
     def _browse_output_dir(self):
         path = filedialog.askdirectory(title="选择输出目录", initialdir=self.output_dir_var.get())
@@ -285,18 +324,32 @@ class LabEngineApp(tk.Tk):
             self.data_manager = DataManager(Path(path))
 
     def _on_routine_selected(self, routine: Optional[RoutineMeta]):
+        # RoutinePanel 初始化时会触发一次 on_select，此时 self.routine_panel 尚未赋值
+        routine_panel = getattr(self, "routine_panel", None)
+        system = getattr(routine_panel, "current_system", None) if routine_panel is not None else None
         self.plot_panel.clear()
         self.log_panel.clear()
         if routine:
             self.connection_panel.set_instruments(routine.instruments)
-            self.log_panel.append(f"已加载例程: {routine.name}")
+            system_label = system.name if system is not None else routine.name
+            self.log_panel.append(f"已加载测试系统: {system_label}")
         else:
             self.connection_panel.set_instruments({})
 
-        # 同步当前例程到“例程结构”只读查看面板，并更新 Tab 标题显示例程名
+        # 同步当前系统到“测试系统结构”只读查看面板，并更新 Tab 标题
         if hasattr(self, "view_setup_panel") and self.view_setup_panel is not None:
-            self.view_setup_panel.set_current_routine(routine)
-            tab_text = f"  例程结构: {routine.name}  " if routine else "  例程结构  "
+            setup_graph = None
+            if system is not None and system.is_setup:
+                setup_graph = system.graph
+            elif self.current_setup_graph is not None:
+                setup_graph = self.current_setup_graph
+            self.view_setup_panel.set_current_routine(routine, setup_graph=setup_graph)
+            if system is not None:
+                tab_text = f"  测试系统结构: {system.name}  "
+            elif routine:
+                tab_text = f"  测试系统结构: {routine.name}  "
+            else:
+                tab_text = "  测试系统结构  "
             try:
                 idx = self.notebook.index(self.view_setup_panel.master)
                 self.notebook.tab(idx, text=tab_text)

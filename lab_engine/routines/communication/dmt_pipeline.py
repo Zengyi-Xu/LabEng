@@ -34,6 +34,18 @@ INSTRUMENTS = {
     "scope": {"type": "oscilloscope", "required": False},
 }
 
+# 双击 Setup 框图中的 DMT 测量任务节点时展示的内部步骤
+INTERNAL_STEPS = [
+    {"key": "step1", "title": "QPSK 信道探测发射",
+     "desc": "生成 QPSK 探测波形（可选预均衡），保存并下载到 AWG"},
+    {"key": "step2", "title": "QPSK 接收与 SNR 估计",
+     "desc": "接收/读取波形，同步后估计每个子载波的 SNR"},
+    {"key": "step3", "title": "Bitloading 发射",
+     "desc": "按 SNR 做比特/功率分配（HH + Levin-Campello），生成数据波形"},
+    {"key": "step4", "title": "Bitloading 接收与解调",
+     "desc": "接收、相位恢复、可选 NN 后均衡，计算 BER/SER 并保存结果"},
+]
+
 PARAMS = [
     {"name": "offline", "label": "离线模式", "type": "bool", "default": True},
     {"name": "use_awg", "label": "使用 AWG 下载波形", "type": "bool", "default": False},

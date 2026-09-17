@@ -55,7 +55,7 @@ build_exe.bat        打包 Windows exe（双击运行，无需 Python）
 
 ## 打包给不会 Python 的人
 
-双击 `build_exe.bat`，把 `dist/` 整个文件夹发出去即可。exe 旁边的 `routines/` 里放例程文件，
+双击 `build_exe.bat`，把 `dist/LabEng/` 整个文件夹发出去即可。exe 旁边的 `routines/` 里放例程文件，
 `data/` 里存数据和参数。
 
 ## 学习本项目

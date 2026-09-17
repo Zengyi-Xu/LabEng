@@ -4,7 +4,12 @@
 
 ## 一句话概述
 
-LabEng 是一个实验室仪器控制引擎：GUI 用「框图」描述 上位机→通信→仪器→例程 的连接关系，**测试例程是 `lab_engine/routines/` 目录下的普通 `.py` 文件**。引擎启动时递归扫描该目录，凡定义了 `NAME`、`PARAMS`、`run` 三个顶层成员的 `.py` 文件会自动出现在 GUI 的例程下拉框里。**新增例程 = 往该目录放一个符合格式的 .py 文件，无需修改任何现有代码。**
+LabEng 是一个实验室仪器控制引擎：GUI 用「框图」描述 上位机→通信→仪器→测量任务 的连接关系。**测试例程是 `lab_engine/routines/` 目录下的普通 `.py` 文件**，每个例程对应一个「单位测试系统」。引擎启动时递归扫描该目录，凡定义了 `NAME`、`PARAMS`、`run` 三个顶层成员的 `.py` 文件会自动出现在 GUI 的测试系统列表里。**新增例程 = 往该目录放一个符合格式的 .py 文件，无需修改任何现有代码。**
+
+术语分层：
+- **测试系统（System）**：一张完整的框图，包括上位机、通信接口、仪器、测量任务节点，保存为 `.labsetup.json`。
+- **测量任务（Routine）**：`.py` 例程脚本，只描述「怎么测」，是单位测试系统；一个 Setup 项目可以引用一个或多个测量任务。
+- **代码节点（Code Node）**：`lab_engine/commlib/` 下的可复用算法单元（如 DMT/CAP 调制、信道、均衡等），供测量任务在内部调用；对 GUI 框图不可见。
 
 ## 给 AI 的任务约定
 
@@ -110,24 +115,91 @@ print("OK")
 EOF
 ```
 
-再在 GUI 里点「🔄 刷新」，确认新例程出现在下拉框且参数表单正确渲染。
+再在 GUI 里点「🔄 刷新」，确认新测量任务出现在测试系统列表且参数表单正确渲染。
 
 ## 引擎结构速览（维护者向）
 
-- `lab_engine/app.py` — 主窗口与三个 Tab（运行 / 例程结构 / 测试系统设计）。
-- `lab_engine/core/registry.py` — 例程与仪器的注册表；`RoutineRegistry.discover()` 递归扫描例程目录，`last_report` 记录加载成败。
+- `lab_engine/app.py` — 主窗口与三个 Tab（运行 / 测试系统结构 / 测试系统设计）。
+- `lab_engine/core/registry.py` — 测量任务（例程）与仪器的注册表；`RoutineRegistry.discover()` 递归扫描例程目录，`last_report` 记录加载成败。
+- `lab_engine/core/system_registry.py` — 测试系统注册表，合并 `.py` 单位系统与 `.labsetup.json` 组合系统。
 - `lab_engine/core/setup_graph.py` — 框图数据模型（节点/边/序列化）。
-- `lab_engine/core/routine_context.py` — 例程运行时上下文（上表所列方法的实现）。
-- `lab_engine/core/param_store.py` — 每个例程的用户参数持久化（`data/routine_params.json`）。
+- `lab_engine/core/routine_context.py` — 测量任务运行时上下文（上表所列方法的实现）。
+- `lab_engine/core/param_store.py` — 每个任务的用户参数持久化（`data/routine_params.json`）。
 - `lab_engine/gui/setup_panel.py` — 框图编辑器（节点绘制、拖拽、连线、向导、保存）。
-- `lab_engine/gui/routine_panel.py` — 运行页的例程选择与参数表单（按 PANEL 描述排序/隐藏参数）。
+- `lab_engine/gui/routine_panel.py` — 运行页的系统选择与参数表单（按 PANEL 描述排序/隐藏参数）。
+- `lab_engine/commlib/` — 通信/信号处理代码节点库（DMT、CAP 等），供测量任务内部调用。
 - `lab_engine/paths.py` — 路径统一入口（开发=仓库根；打包 exe 后=exe 旁边）。
 - `ivlab/` — 底层仪器驱动与扫描器（SCPI/TSP/GPIB/VISA 封装）。
 
 ## 例程文件里的可选高级字段
 
-- `SETUP_GRAPH`（dict）— 保存时的框图快照，GUI「例程结构」页按它还原布局。**由 GUI 写入，手写例程不要加。**
-- `PANEL`（dict）— 操作面板描述（分区/标题/参数显隐）。同样由 GUI 写入。
+- `SETUP_GRAPH`（dict）— 保存时的框图快照，GUI「例程结构」页按它还原布局。**现在保存在 `.labsetup.json` Setup 项目文件中，由「测试系统设计」Tab 写入；手写例程不要加。**
+- `PANEL`（dict）— 操作面板描述（分区/标题/参数显隐）。**同样保存在 `.labsetup.json` 项目文件中**，运行页按它渲染参数表单。
+
+## 代码节点库（commlib）
+
+`lab_engine/commlib/` 是测量任务内部可复用的算法单元库，目前包含：
+
+- `dmt/` — DMT 调制/解调、IFFT/FFT、星座映射、虚拟信道、画图/保存等节点。
+- `cap/` — 单带/多带 CAP 收发链路、Volterra/LMS/NN 均衡、星座图画图等节点。
+- `executor.py` — 按有向图拓扑执行代码节点。
+- `registry.py` — 合并各库节点注册表。
+
+这些节点**不直接出现在 GUI 框图里**，而是供 `.py` 测量任务在 `run()` 内部调用。例如 `lab_engine/routines/communication/dmt_lowcode_tx.py` 演示如何用代码节点拼一条离线 DMT 发射链路。
+
+> 注：`lab_engine/commlib/superposition/` 目录已复制但尚未接入注册表，等算法稳定后再合并。
+
+## AI 生成/检查例程的提示词模板
+
+如果你（或学弟学妹）想用 AI 生成测量任务，建议把下面的提示词填进 Kimi / Codex / ChatGPT，让 AI 按统一格式输出。生成后，Agent 也会按同样的清单检查。
+
+```text
+你正在为一个实验室仪器控制软件 LabEng 编写测量任务（Routine）。
+测量任务是 lab_engine/routines/ 目录下的普通 Python 文件，代表一个单位测试系统，必须满足：
+
+1. 文件顶层定义：
+   - NAME：唯一的中文名字字符串，会显示在 GUI 的测试系统列表。
+   - DESCRIPTION：简短描述字符串（可选）。
+   - ICON：单个 emoji 字符串（可选）。
+   - INSTRUMENTS：字典，key 是仪器别名，value 是 {"type": 仪器类型, "required": true/false}。
+   - PARAMS：参数列表，每项是 {"name": ..., "label": ..., "type": "float|int|str|choice|bool", "default": ...}，choice 类型必须带 "choices"。
+
+2. 必须实现函数：
+   def run(instruments, params, context):
+       """测量任务入口。"""
+       ...
+
+3. 约束：
+   - 不要写 if __name__ == "__main__": 测试块。
+   - 不要直接用 print，统一用 context.log(text, level="info|warning|error")。
+   - 长循环里必须检查 context.is_stopped()，用户点击停止时立即退出。
+   - 每个数据点用 context.point(**kwargs) 上报。
+   - 用 context.progress(current, total) 更新进度条。
+   - 函数最后必须调用 context.done(success=True) 或 context.done(success=False)。
+   - 仪器对象只能从 instruments 字典取，不要自己实例化。
+
+4. 任务描述：
+   [在这里填写实验意图：使用什么仪器、是否同步触发、扫参范围、测量什么、如何保存/绘图、是否多仪器联动等]
+
+请直接输出完整可运行的 .py 文件内容，不要加额外解释。
+```
+
+生成后请运行下面的自检脚本验证结构：
+
+```bash
+python - <<'EOF'
+import importlib.util
+spec = importlib.util.spec_from_file_location("t", "lab_engine/routines/你的例程.py")
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+assert isinstance(m.NAME, str) and m.NAME
+assert isinstance(m.PARAMS, list)
+assert callable(m.run)
+for p in m.PARAMS:
+    assert p.get("name") and p.get("type") in ("float","int","str","choice","bool")
+    if p["type"] == "choice": assert p.get("choices")
+print("OK")
+EOF
+```
 
 ## 添加一台新仪器（维护者向）
 
@@ -137,5 +209,5 @@ EOF
 
 ## 打包与发布
 
-- 双击 `build_exe.bat` 生成 `dist/LabEng.exe`（需 `pip install pyinstaller`）。
-- `dist/` 里已附带 `routines/` 目录；使用者把新例程 .py 丢进去、点「🔄 刷新」即可用。
+- 双击 `build_exe.bat` 生成 `dist/LabEng/LabEng.exe`（需 `pip install pyinstaller`）。
+- `dist/LabEng/` 里已附带 `routines/` 目录；使用者把新例程 .py 丢进去、点「🔄 刷新」即可用。

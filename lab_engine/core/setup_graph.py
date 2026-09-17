@@ -4,7 +4,7 @@
 - host       : 上位机，输出 control
 - comm       : 通信接口/协议，输入 control，输出 comm
 - instrument : 仪器，输入 comm，输出 data
-- routine    : 例程，输入所需的 instrument data
+- routine    : 测量任务，输入所需的 instrument data
 
 SetupGraph 负责序列化、反序列化以及基础合法性校验。
 """
@@ -385,7 +385,7 @@ def _default_label(node_type: str) -> str:
         "host": "上位机",
         "comm": "通信接口",
         "instrument": "仪器",
-        "routine": "例程",
+        "routine": "测量任务",
         "text": "双击编辑文本",
     }.get(node_type, node_type.capitalize())
 

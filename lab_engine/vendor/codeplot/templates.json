@@ -1,0 +1,51 @@
+{
+  "builtin": {
+    "Basic Charts": {
+      "Sine Wave": {
+        "desc": "Draw a sine curve, demonstrating the most basic line chart usage.",
+        "code": "# Sine wave\nx = np.linspace(0, 4*np.pi, 500)\ny = np.sin(x)\n\nax = fig.add_subplot(111)\nax.clear()\nax.plot(x, y, color='tab:blue', linewidth=2)\nax.set_title('Sine wave', fontsize=14)\nax.set_xlabel('x (rad)')\nax.set_ylabel('sin(x)')\nax.grid(True, alpha=0.3)\nfig.tight_layout()\n"
+      },
+      "Sine + Cosine": {
+        "desc": "Plot sine and cosine on the same figure, with legend.",
+        "code": "# Sine wave + Cosine wave\nx = np.linspace(0, 4*np.pi, 500)\ny1 = np.sin(x)\ny2 = np.cos(x)\n\nax = fig.add_subplot(111)\nax.clear()\nax.plot(x, y1, label='sin(x)', linewidth=2)\nax.plot(x, y2, label='cos(x)', linewidth=2, linestyle='--')\nax.set_title('Sine and Cosine', fontsize=14)\nax.set_xlabel('x (rad)')\nax.set_ylabel('y')\nax.legend()\nax.grid(True, alpha=0.3)\nfig.tight_layout()\n"
+      },
+      "Random Scatter": {
+        "desc": "Scatter plot with color and size mapping.",
+        "code": "# Random scatter plot\nnp.random.seed(42)\nx = np.random.randn(200)\ny = np.random.randn(200)\ncolors = np.random.rand(200)\nsizes = 100 * np.random.rand(200)\n\nax = fig.add_subplot(111)\nax.clear()\nscatter = ax.scatter(x, y, c=colors, s=sizes, alpha=0.6, cmap='viridis')\nax.set_title('Random scatter', fontsize=14)\nax.set_xlabel('x')\nax.set_ylabel('y')\nfig.colorbar(scatter, ax=ax, label='Color value')\nfig.tight_layout()\n"
+      },
+      "Grouped Bar Chart": {
+        "desc": "Grouped bar chart comparing two data sets.",
+        "code": "# Grouped bar chart\ncategories = ['A', 'B', 'C', 'D', 'E']\nvalues1 = [23, 45, 56, 78, 32]\nvalues2 = [15, 30, 45, 60, 25]\n\nx = np.arange(len(categories))\nwidth = 0.35\n\nax = fig.add_subplot(111)\nax.clear()\nax.bar(x - width/2, values1, width, label='Group 1', color='tab:blue')\nax.bar(x + width/2, values2, width, label='Group 2', color='tab:orange')\nax.set_xticks(x)\nax.set_xticklabels(categories)\nax.set_title('Grouped bar chart', fontsize=14)\nax.set_ylabel('Value')\nax.legend()\nfig.tight_layout()\n"
+      },
+      "Pie Chart": {
+        "desc": "Classic pie chart with percentage labels.",
+        "code": "# Pie chart\nlabels = ['A', 'B', 'C', 'D', 'E']\nsizes = [30, 25, 20, 15, 10]\nexplode = (0.05, 0, 0, 0, 0)\n\nax = fig.add_subplot(111)\nax.clear()\nax.pie(sizes, explode=explode, labels=labels, autopct='%1.1f%%',\n       shadow=True, startangle=90, colors=plt.cm.Pastel1.colors)\nax.set_title('Pie chart', fontsize=14)\nfig.tight_layout()\n"
+      }
+    },
+    "Statistical Charts": {
+      "Histogram + KDE": {
+        "desc": "Histogram of data distribution overlaid with kernel density estimate.",
+        "code": "# Histogram + density curve\nnp.random.seed(42)\ndata = np.random.normal(100, 15, 1000)\n\nax = fig.add_subplot(111)\nax.clear()\nn, bins, patches = ax.hist(data, bins=30, density=True, alpha=0.7, color='tab:blue', edgecolor='white')\nmu, sigma = np.mean(data), np.std(data)\nx_line = np.linspace(data.min(), data.max(), 100)\nax.plot(x_line, 1/(sigma*np.sqrt(2*np.pi)) * np.exp(-(x_line-mu)**2/(2*sigma**2)),\n        'r-', linewidth=2, label='Normal fit')\nax.set_title('Histogram and density', fontsize=14)\nax.set_xlabel('Value')\nax.set_ylabel('Density')\nax.legend()\nfig.tight_layout()\n"
+      },
+      "Box Plot": {
+        "desc": "Box plot comparison of multiple data groups.",
+        "code": "# Box plot\nnp.random.seed(42)\ndata = [np.random.normal(0, std, 100) for std in range(1, 5)]\nlabels = ['A', 'B', 'C', 'D']\n\nax = fig.add_subplot(111)\nax.clear()\nbp = ax.boxplot(data, tick_labels=labels, patch_artist=True)\ncolors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4']\nfor patch, color in zip(bp['boxes'], colors):\n    patch.set_facecolor(color)\n    patch.set_alpha(0.7)\nax.set_title('Box plot', fontsize=14)\nax.set_ylabel('Value')\nax.grid(True, axis='y', alpha=0.3)\nfig.tight_layout()\n"
+      }
+    },
+    "Scientific Charts": {
+      "3D Surface": {
+        "desc": "3D surface plot showing a bivariate function.",
+        "code": "# 3D surface plot\nfrom mpl_toolkits.mplot3d import Axes3D\n\nX = np.linspace(-5, 5, 50)\nY = np.linspace(-5, 5, 50)\nX, Y = np.meshgrid(X, Y)\nZ = np.sin(np.sqrt(X**2 + Y**2))\n\nax = fig.add_subplot(111, projection='3d')\nax.clear()\nsurf = ax.plot_surface(X, Y, Z, cmap='viridis', alpha=0.9, edgecolor='none')\nax.set_title('3D surface: z = sin(√(x²+y²))', fontsize=14)\nax.set_xlabel('X')\nax.set_ylabel('Y')\nax.set_zlabel('Z')\nfig.colorbar(surf, ax=ax, shrink=0.5, aspect=10)\nfig.tight_layout()\n"
+      },
+      "Contour Plot": {
+        "desc": "Filled contour plot, suitable for terrain / potential surfaces.",
+        "code": "# Contour plot\nx = np.linspace(-3, 3, 100)\ny = np.linspace(-3, 3, 100)\nX, Y = np.meshgrid(x, y)\nZ = np.exp(-(X**2 + Y**2))\n\nax = fig.add_subplot(111)\nax.clear()\ncontourf = ax.contourf(X, Y, Z, levels=20, cmap='RdYlBu_r')\ncontour = ax.contour(X, Y, Z, levels=10, colors='black', linewidths=0.5)\nax.clabel(contour, inline=True, fontsize=8)\nax.set_title('Contour plot: z = exp(-(x²+y²))', fontsize=14)\nax.set_xlabel('X')\nax.set_ylabel('Y')\nfig.colorbar(contourf, ax=ax, label='Z value')\nfig.tight_layout()\n"
+      },
+      "Heatmap": {
+        "desc": "Matrix heatmap showing correlation or data intensity.",
+        "code": "# Heatmap\nnp.random.seed(42)\ndata = np.random.rand(10, 10)\nrow_labels = [f'R{i}' for i in range(1, 11)]\ncol_labels = [f'C{i}' for i in range(1, 11)]\n\nax = fig.add_subplot(111)\nax.clear()\nim = ax.imshow(data, cmap='YlOrRd', aspect='auto')\nax.set_xticks(np.arange(len(col_labels)))\nax.set_yticks(np.arange(len(row_labels)))\nax.set_xticklabels(col_labels)\nax.set_yticklabels(row_labels)\nfor i in range(10):\n    for j in range(10):\n        text = ax.text(j, i, f'{data[i, j]:.2f}',\n                       ha=\"center\", va=\"center\", color=\"black\", fontsize=8)\nax.set_title('Heatmap', fontsize=14)\nfig.colorbar(im, ax=ax, label='Intensity')\nfig.tight_layout()\n"
+      }
+    }
+  },
+  "user": {}
+}

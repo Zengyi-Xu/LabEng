@@ -234,8 +234,9 @@ class _InstrumentCard(tk.Frame):
         self.worker.start()
 
     def stop_worker(self):
-        if self.worker is not None:
+        if self.worker is not None and self.worker.is_alive():
             self.cmd_queue.put(("stop",))
+            self.worker.join(timeout=1.0)
 
     def set_enabled(self, enabled: bool):
         """启用或禁用连接按钮。"""

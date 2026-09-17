@@ -24,6 +24,11 @@ def routines_dir() -> Path:
     return app_root() / "lab_engine" / "routines"
 
 
+def systems_dir() -> Path:
+    """组合测试系统（.labsetup.json）默认存放目录。"""
+    return data_dir() / "systems"
+
+
 def draft_path() -> Path:
     return data_dir() / "draft_setup.json"
 
